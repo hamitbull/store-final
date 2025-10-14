@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="ha">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Mhyasi Store</title>
+  <link rel="manifest" href="manifest.json"/>
+  <meta name="theme-color" content="#6A0DAD"/>
+  <style>
+    :root{--accent1:#6a11cb;--accent2:#2575fc;--panel:#fff;--fg:#0f172a}
+    body{margin:0;font-family:Arial,Helvetica,sans-serif;background:linear-gradient(135deg,var(--accent1),var(--accent2));color:#fff}
+    header{padding:12px 18px;display:flex;justify-content:space-between;align-items:center}
+    main{padding:18px;max-width:1100px;margin:18px auto;display:grid;grid-template-columns:1fr 420px;gap:16px}
+    .panel{background:var(--panel);color:var(--fg);border-radius:12px;padding:14px}
+    input,button,select,textarea{padding:8px;border-radius:8px;border:1px solid #e6e9ef}
+    .btn{background:linear-gradient(90deg,var(--accent2),var(--accent1));color:white;border:none;padding:8px 10px;border-radius:8px;cursor:pointer}
+    .small{font-size:13px;color:#64748b}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:6px;border-bottom:1px solid #eef2f7}
+    @media(max-width:980px){main{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <header>
+    <div style="font-weight:700">🌊 Mhyasi Store</div>
+    <div id="authControls"></div>
+  </header>
+
+  <main>
+    <div>
+      <div class="panel" id="profilePanel">
+        <div style="display:flex;align-items:center;gap:12px">
+          <img id="shopLogo" src="" alt="logo" style="width:72px;height:72px;border-radius:12px;object-fit:cover;display:none"/>
+          <div style="flex:1">
+            <div style="font-weight:700" id="shopName">Not logged</div>
+            <div class="small" id="shopAddress">—</div>
+          </div>
+          <div>
+            <button class="btn" id="btnProfile">Profile</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-weight:700">Products</div>
+          <div class="small">Free: <b id="freeLimitText">5</b></div>
+        </div>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <input id="pName" placeholder="Name" style="flex:1" />
+          <input id="pPrice" placeholder="Price" type="number" style="width:110px" />
+          <input id="pQty" placeholder="Qty" type="number" style="width:80px" />
+          <button id="saveProductBtn" class="btn">Save</button>
+        </div>
+        <div style="margin-top:8px;max-height:300px;overflow:auto">
+          <table id="productsTable"><thead><tr><th>Name</th><th>Price</th><th>Qty</th><th>Action</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:12px">
+        <div style="font-weight:700">Invoice History</div>
+        <div id="historyList" style="margin-top:8px;max-height:220px;overflow:auto"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <div style="font-weight:700">Cart</div>
+        <div style="margin-top:8px">
+          <div id="cartItems"></div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <input id="customerName" placeholder="Customer (optional)" style="flex:1" />
+            <div style="min-width:140px;text-align:right"><div class="small">Total</div><div id="cartTotal" style="font-weight:800">₦0</div></div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button id="completeSaleBtn" class="btn">Complete Sale</button>
+            <button id="printBtn" class="btn">Print</button>
+            <button id="clearCartBtn" class="btn" style="background:#eee;color:#111">Clear</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">Unlock / Admin</div><div class="small">Requests & codes</div></div>
+        <div style="margin-top:8px">
+          <button id="btnRequest" class="btn">Request Unlock</button>
+          <button id="btnEnterCode" class="btn" style="background:#fff;color:#111;border:1px solid #e6e9ef">Enter Code</button>
+          <button id="btnAdmin" class="btn" style="background:#fff;color:#111;border:1px solid #e6e9ef">Admin</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="modalRoot" style="display:none"></div>
+
+<script>
+/* CONFIG */
+const API_BASE = "http://localhost:4000"; // canza zuwa backend URL bayan deploy
+const FREE_PRODUCT_LIMIT = 5;
+
+let token = localStorage.getItem('mhyasi_token') || null;
+let currentUser = JSON.parse(localStorage.getItem('mhyasi_user') || 'null') || null;
+let products = [];
+let cart = [];
+let invoices = [];
+
+/* helpers */
+function $(s){ return document.querySelector(s); }
+function showModal(html){ const r=document.getElementById('modalRoot'); r.style.display='block'; r.innerHTML = '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999"><div style="background:#fff;color:#000;padding:16px;border-radius:12px;max-width:96%;width:720px">'+html+'<div style="text-align:right;margin-top:12px"><button onclick="closeModal()" style="padding:8px">Close</button></div></div></div>'; }
+function closeModal(){ const r=document.getElementById('modalRoot'); r.style.display='none'; r.innerHTML=''; }
+function toCurrency(n){ return "₦" + Number(n||0).toLocaleString(); }
+
+/* auth UI */
+function renderAuth(){
+  const ctrl = $('#authControls');
+  if(token && currentUser){
+    ctrl.innerHTML = `<span style="margin-right:12px;font-weight:700">${currentUser.username}${currentUser.role==='admin'?' (admin)':''}</span><button id="btnLogout" class="btn" style="background:#fff;color:#111;border:1px solid #e6e9ef">Logout</button>`;
+    $('#btnLogout').onclick = async ()=>{ localStorage.removeItem('mhyasi_token'); localStorage.removeItem('mhyasi_user'); token=null; currentUser=null; renderAuth(); renderProfile(); loadProducts(); renderProductsTable(); loadInvoices(); };
+  } else {
+    ctrl.innerHTML = `<button id="btnLogin" class="btn" style="background:#fff;color:#111;border:1px solid #e6e9ef">Login</button> <button id="btnRegister" class="btn" style="background:#fff;color:#111;border:1px solid #e6e9ef">Register</button>`;
+    $('#btnLogin').onclick = openLogin;
+    $('#btnRegister').onclick = openRegister;
+  }
+}
+
+/* profile render */
+function renderProfile(){
+  if(!currentUser){ $('#shopLogo').style.display='none'; $('#shopName').textContent='Not logged'; $('#shopAddress').textContent='—'; return; }
+  $('#shopName').textContent = currentUser.shop_name || currentUser.username;
+  $('#shopAddress').textContent = currentUser.shop_address || '';
+  if(currentUser.logo_path){
+    $('#shopLogo').src = API_BASE.replace(/\/$/,'') + currentUser.logo_path;
+    $('#shopLogo').style.display = 'block';
+  } else $('#shopLogo').style.display='none';
+}
+
+/* login/register */
+function openRegister(){
+  showModal(`<h3>Register</h3><div style="display:flex;gap:8px"><input id="regUser" placeholder="username" style="flex:1"/><input id="regPass" placeholder="password" type="password" style="width:200px"/></div><div style="margin-top:8px"><input id="regShop" placeholder="Shop name (optional)" style="width:100%"/><input id="regAddr" placeholder="Shop address (optional)" style="width:100%;margin-top:6px"/></div><div style="text-align:right;margin-top:8px"><button id="doReg" class="btn">Create</button></div>`);
+  setTimeout(()=>{ $('#doReg').onclick = async ()=>{
+    const u = $('#regUser').value.trim(), p = $('#regPass').value, s = $('#regShop').value, a = $('#regAddr').value;
+    if(!u || !p) return alert('user & pass required');
+    const res = await fetch(API_BASE + '/api/register', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username:u, password:p, shop_name: s, shop_address: a })});
+    const j = await res.json();
+    if(!j.ok) return alert(j.error || 'Failed');
+    alert('Registered — please login');
+    closeModal();
+  }; },50);
+}
+
+function openLogin(){
+  showModal(`<h3>Login</h3><div style="display:flex;gap:8px"><input id="loginUser" placeholder="username" style="flex:1"/><input id="loginPass" placeholder="password" type="password" style="width:200px"/></div><div style="text-align:right;margin-top:8px"><button id="doLogin" class="btn">Login</button></div>`);
+  setTimeout(()=>{ $('#doLogin').onclick = async ()=>{
+    const u = $('#loginUser').value.trim(), p = $('#loginPass').value;
+    if(!u||!p) return alert('user & pass required');
+    const res = await fetch(API_BASE + '/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ username:u, password:p })});
+    const j = await res.json();
+    if(!j.ok) return alert(j.error || 'Login failed');
+    token = j.token; currentUser = j.user; localStorage.setItem('mhyasi_token', token); localStorage.setItem('mhyasi_user', JSON.stringify(currentUser)); closeModal(); renderAuth(); renderProfile(); loadProducts(); loadInvoices();
+  }; },50);
+}
+
+/* profile edit (upload logo) */
+$('#btnProfile').onclick = ()=> {
+  if(!currentUser) return openLogin();
+  showModal(`<h3>Profile</h3><div><input id="shopNameInput" placeholder="Shop name" style="width:100%;margin-bottom:8px"/><input id="shopAddrInput" placeholder="Shop address" style="width:100%;margin-bottom:8px"/><div style="margin-top:8px"><label>Upload logo:</label><input type="file" id="logoFile"></div></div><div style="text-align:right;margin-top:8px"><button id="saveProfile" class="btn">Save</button></div>`);
+  setTimeout(()=> {
+    $('#shopNameInput').value = currentUser.shop_name || '';
+    $('#shopAddrInput').value = currentUser.shop_address || '';
+    $('#saveProfile').onclick = async ()=>{
+      const sn = $('#shopNameInput').value.trim(), sa = $('#shopAddrInput').value.trim();
+      await fetch(API_BASE + '/api/profile', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body: JSON.stringify({ shop_name: sn, shop_address: sa })});
+      const f = $('#logoFile').files[0];
+      if(f){
+        const fd = new FormData(); fd.append('logo', f);
+        const r = await fetch(API_BASE + '/api/profile/logo', { method:'POST', headers:{'Authorization':'Bearer '+token}, body: fd });
+        const jr = await r.json();
+        if(jr.ok) currentUser.logo_path = jr.logo_path;
+      }
+      // refresh me
+      const me = await fetch(API_BASE + '/api/me', { headers: { 'Authorization': 'Bearer ' + token }});
+      const jm = await me.json();
+      if(jm.ok) currentUser = jm.user;
+      localStorage.setItem('mhyasi_user', JSON.stringify(currentUser));
+      closeModal(); renderProfile();
+    };
+  },50);
+};
+
+/* products */
+$('#saveProductBtn').onclick = async ()=>{
+  if(!currentUser) return openLogin();
+  const name = $('#pName').value.trim(); const price = Number($('#pPrice').value)||0; const qty = Number($('#pQty').value)||0;
+  if(!name) return alert('Enter name');
+  const res = await fetch(API_BASE + '/api/products', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body: JSON.stringify({ name, price, qty })});
+  const j = await res.json();
+  if(!j.ok) return alert(j.error||'Error');
+  $('#pName').value=''; $('#pPrice').value=''; $('#pQty').value='';
+  await loadProducts();
+};
+
+async function loadProducts(){
+  if(!currentUser) { products = []; renderProductsTable(); return; }
+  const r = await fetch(API_BASE + '/api/products', { headers: { 'Authorization':'Bearer '+token }});
+  const j = await r.json();
+  products = j.ok ? j.products || [] : [];
+  renderProductsTable();
+}
+
+function renderProductsTable(){
+  const tbody = $('#productsTable tbody'); tbody.innerHTML='';
+  products.forEach(p=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${p.name}</td><td>${toCurrency(p.price)}</td><td>${p.qty}</td><td><button class="btn" onclick='addToCart("${p.id}")'>Add</button> <button class="btn" style="background:#fff;color:#111;border:1px solid #e6e9ef" onclick='editProduct("${p.id}")'>Edit</button> <button style="background:#eee;color:#111;border:none;padding:6px;border-radius:6px" onclick='delProduct("${p.id}")'>Del</button></td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+/* cart */
+window.addToCart = function(id){ const p = products.find(x=>String(x.id)===String(id)); if(!p) return alert('not found'); const exists = cart.find(c=>c.id==p.id); if(exists) exists.qty += 1; else cart.push({ id: p.id, name:p.name, price:p.price, qty:1 }); renderCart(); }
+function renderCart(){ const wrap = $('#cartItems'); wrap.innerHTML=''; let total=0; cart.forEach((c,i)=>{ total += c.price * c.qty; const div = document.createElement('div'); div.style='display:flex;justify-content:space-between;align-items:center;padding:6px;border-bottom:1px solid #eee'; div.innerHTML = `<div>${c.name} x ${c.qty}</div><div>${toCurrency(c.price*c.qty)} <button onclick='removeCart(${i})' style="margin-left:8px">Remove</button></div>`; wrap.appendChild(div); }); $('#cartTotal').textContent = toCurrency(total); }
+function removeCart(i){ cart.splice(i,1); renderCart(); }
+$('#clearCartBtn').onclick = ()=>{ if(confirm('Clear cart?')){ cart=[]; renderCart(); } }
+
+/* edit/delete product */
+window.editProduct = function(id){
+  const p = products.find(x=>String(x.id)===String(id)); if(!p) return;
+  $('#pName').value = p.name; $('#pPrice').value = p.price; $('#pQty').value = p.qty;
+  $('#saveProductBtn').textContent = 'Update';
+  $('#saveProductBtn').onclick = async ()=>{
+    const name = $('#pName').value.trim(), price = Number($('#pPrice').value)||0, qty = Number($('#pQty').value)||0;
+    await fetch(API_BASE + '/api/products/' + id, { method:'PUT', headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}, body: JSON.stringify({ name, price, qty })});
+    $('#pName').value=''; $('#pPrice').value=''; $('#pQty').value=''; $('#saveProductBtn').textContent='Save'; $('#saveProductBtn').onclick = defaultSave;
+    await loadProducts();
+  };
+};
+const defaultSave = $('#saveProductBtn').onclick;
+
+window.delProduct = async function(id){
+  if(!confirm('Delete?')) return;
+  await fetch(API_BASE + '/api/products/' + id, { method:'DELETE', headers: { 'Authorization':'Bearer '+token }});
+  await loadProducts();
+};
+
+/* invoices */
+async function loadInvoices(){
+  if(!currentUser) { invoices = []; renderInvoices(); return; }
+  const r = await fetch(API_BASE + '/api/invoices', { headers: { 'Authorization':'Bearer '+token }});
+  const j = await r.json();
+  invoices = j.ok ? j.invoices || [] : [];
+  renderInvoices();
+}
+function renderInvoices(){
+  const wr = $('#historyList'); wr.innerHTML=''; invoices.forEach(inv => {
+    const div = document.createElement('div'); div.style='padding:8px;border-bottom:1px solid #eee';
+    div.innerHTML = `<div><b>${inv.invoice_id}</b> — ${new Date((inv.created_at||Date.now())*1000).toLocaleString()}</div><div>${toCurrency(inv.total)}</div><div style="margin-top:6px"><button class="btn" onclick='viewInvoice("${inv.invoice_id}")'>View/Print</button></div>`;
+    wr.appendChild(div);
+  });
+}
+
+window.viewInvoice = function(id){
+  const inv = invoices.find(i => i.invoice_id === id || i.invoice_id == id);
+  if(!inv) return alert('inv not found');
+  const items = inv.items || JSON.parse(inv.items || '[]');
+  let html = `<div style="font-weight:700;font-size:18px">${currentUser.shop_name || currentUser.username}</div><div>${currentUser.shop_address || ''}</div><hr><h3>Invoice ${inv.invoice_id}</h3><div>${new Date((inv.created_at||Date.now())*1000).toLocaleString()}</div><table style="width:100%;border-collapse:collapse;margin-top:8px"><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead><tbody>`;
+  items.forEach(it => html += `<tr><td>${it.name}</td><td>${it.qty}</td><td>${toCurrency(it.price)}</td><td>${toCurrency(it.qty*it.price)}</td></tr>`);
+  html += `</tbody></table><div style="text-align:right;font-weight:800;margin-top:8px">Total: ${toCurrency(inv.total)}</div>`;
+  const wnd = window.open('', '_blank');
+  wnd.document.write('<html><head><title>Invoice</title></head><body>'+html+'</body></html>');
+  wnd.document.close();
+  wnd.print();
+};
+
+/* complete sale */
+$('#completeSaleBtn').onclick = async ()=>{
+  if(cart.length === 0) return alert('Cart empty');
+  if(!currentUser) return openLogin();
+  const invoice_id = 'INV-' + Math.random().toString(36).slice(2,9).toUpperCase();
+  const customer = $('#customerName').value.trim();
+  const items = cart.map(c => ({ name: c.name, qty: c.qty, price: c.price }));
+  const total = items.reduce((s,i)=>s + i.qty*i.price,0);
+  const res = await fetch(API_BASE + '/api/invoices', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token }, body: JSON.stringify({ invoice_id, customer, items, total })});
+  if (res.status === 403) {
+    const j = await res.json();
+    return alert(j.error || 'Account locked. Request unlock');
+  }
+  const j = await res.json();
+  if(!j.ok) return alert(j.error || 'Failed');
+  alert('Sale completed');
+  cart = []; renderCart(); await loadInvoices();
+};
+
+/* print current cart */
+$('#printBtn').onclick = ()=>{
+  if(cart.length===0) return alert('Cart empty');
+  let html = `<div style="font-weight:700;font-size:18px">${currentUser?currentUser.shop_name: 'Mhyasi Store'}</div><div>${currentUser?currentUser.shop_address:''}</div><hr><h3>Invoice Preview</h3><table style="width:100%;border-collapse:collapse;margin-top:8px"><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead><tbody>`;
+  cart.forEach(c=> html += `<tr><td>${c.name}</td><td>${c.qty}</td><td>${toCurrency(c.price)}</td><td>${toCurrency(c.price*c.qty)}</td></tr>`);
+  html += `</tbody></table><div style="text-align:right;font-weight:800;margin-top:8px">Total: ${toCurrency(cart.reduce((s,i)=>s + i.qty*i.price,0))}</div>`;
+  const wnd = window.open('','_blank'); wnd.document.write('<html><head><title>Invoice</title></head><body>'+html+'</body></html>'); wnd.document.close(); wnd.print();
+};
+
+/* unlock request & redeem */
+$('#btnRequest').onclick = ()=> {
+  if(!currentUser) return openLogin();
+  showModal(`<h3>Request Unlock</h3><div><input id="reqAmount" placeholder="Amount (₦)" type="number" style="width:100%"/><textarea id="reqDetails" placeholder="Details (optional)" style="width:100%;margin-top:6px"></textarea></div><div style="text-align:right;margin-top:8px"><button id="doReq" class="btn">Send</button></div>`);
+  setTimeout(()=>{ $('#doReq').onclick = async ()=>{
+    const amt = Number($('#reqAmount').value) || 0; const details = $('#reqDetails').value || '';
+    if(amt <= 0) return alert('enter amount');
+    const r = await fetch(API_BASE + '/api/request', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token }, body: JSON.stringify({ amount: amt, details })});
+    const j = await r.json();
+    if(!j.ok) return alert(j.error||'failed');
+    alert('Request sent to admin'); closeModal();
+  }; },50);
+};
+
+$('#btnEnterCode').onclick = ()=> {
+  if(!currentUser) return openLogin();
+  showModal(`<h3>Enter Unlock Code</h3><div><input id="codeInput" placeholder="CODE" style="width:100%"/></div><div style="text-align:right;margin-top:8px"><button id="doRedeem" class="btn">Redeem</button></div>`);
+  setTimeout(()=>{ $('#doRedeem').onclick = async ()=>{
+    const code = $('#codeInput').value.trim(); if(!code) return alert('enter code');
+    const r = await fetch(API_BASE + '/api/redeem', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token }, body: JSON.stringify({ code })});
+    const j = await r.json();
+    if(!j.ok) return alert(j.error||j.msg||'redeem failed');
+    alert('Redeemed — account unlocked'); closeModal();
+  }; },50);
+};
+
+/* admin panel */
+$('#btnAdmin').onclick = async ()=> {
+  if(!currentUser) return openLogin();
+  if(currentUser.role !== 'admin') return alert('Admin only');
+  const r1 = await fetch(API_BASE + '/api/requests', { headers: { 'Authorization':'Bearer '+token }});
+  const j1 = await r1.json(); const reqs = j1.ok ? j1.requests : [];
+  const r2 = await fetch(API_BASE + '/api/codes', { headers: { 'Authorization':'Bearer '+token }});
+  const j2 = await r2.json(); const codes = j2.ok ? j2.codes : [];
+  let html = `<h3>Admin Panel</h3><div style="display:flex;gap:12px"><div style="flex:1"><h4>Requests</h4>`;
+  reqs.forEach(r=>{
+    html += `<div style="border:1px solid #eee;padding:8px;margin-bottom:8px"><div><b>${r.username}</b> — ₦${r.amount}</div><div class="small">${r.details||''}</div><div style="text-align:right;margin-top:8px"><select id="dur_${r.id}"><option value="30">30 days</option><option value="90">3 months</option><option value="365">1 year</option></select><select id="unit_${r.id}"><option value="days">days</option><option value="months">months</option><option value="years">years</option></select> <button onclick="approveReq(${r.id})" class="btn">Approve</button> <button onclick="declineReq(${r.id})" style="background:#eee;color:#111">Decline</button></div></div>`;
+  });
+  html += `</div><div style="flex:1"><h4>Codes</h4>`;
+  codes.forEach(c=>{
+    html += `<div style="border:1px solid #eee;padding:8px;margin-bottom:8px"><div><b>${c.code}</b> — for ${c.for_username}</div><div class="small">Until: ${c.until ? new Date(c.until).toLocaleString() : '-'}</div></div>`;
+  });
+  html += `</div></div>`;
+  showModal(html);
+  window.approveReq = async function(reqId){
+    const durEl = document.getElementById('dur_'+reqId);
+    const unitEl = document.getElementById('unit_'+reqId);
+    const duration = Number(durEl.value || 30);
+    const unit = unitEl.value || 'days';
+    const r = await fetch(API_BASE + '/api/approve', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token }, body: JSON.stringify({ requestId: reqId, duration, unit })});
+    const j = await r.json(); if(!j.ok) return alert(j.error||'fail');
+    alert('Approved. Code: ' + j.code); closeModal();
+  };
+  window.declineReq = async function(reqId){
+    if(!confirm('Decline?')) return;
+    const r = await fetch(API_BASE + '/api/decline', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token }, body: JSON.stringify({ requestId: reqId })});
+    const j = await r.json(); if(!j.ok) return alert(j.error||'fail'); alert('Declined'); closeModal();
+  };
+};
+
+/* init */
+renderAuth();
+renderProfile();
+loadProducts();
+loadInvoices();
+renderProductsTable();
+renderCart();
+</script>
+</body>
+</html>
+

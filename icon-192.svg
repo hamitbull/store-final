@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#6a11cb"/><stop offset="1" stop-color="#2575fc"/></linearGradient></defs>
+  <rect width="192" height="192" rx="28" fill="url(#g)"/>
+  <text x="50%" y="56%" font-family="Arial" font-size="28" fill="#fff" font-weight="700" text-anchor="middle" alignment-baseline="middle">Mhyasi</text>
+</svg>
