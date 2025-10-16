@@ -14,8 +14,9 @@ app.use(bodyParser.json());
 app.use("/uploads", express.static("uploads"));
 
 let db;
+const SECRET = "mhyasi-secret";
 
-// 🧠 Init database
+/* 🗄️ Initialize database */
 (async () => {
   const SQL = await initSqlJs();
   if (fs.existsSync("mhyasi.db")) {
@@ -62,6 +63,13 @@ let db;
         until INTEGER
       );
     `);
+
+    // 🔑 default admin account
+    const hash = bcrypt.hashSync("admin123", 8);
+    db.run(
+      "INSERT INTO users (username, password, role, shop_name, shop_address) VALUES (?,?,?,?,?)",
+      ["admin", hash, "admin", "Admin Store", "Head Office"]
+    );
     saveDb();
   }
 })();
@@ -71,9 +79,7 @@ function saveDb() {
   fs.writeFileSync("mhyasi.db", Buffer.from(data));
 }
 
-const SECRET = "mhyasi-secret";
-
-// 🔐 Middleware
+/* 🔐 Auth middleware */
 function auth(req, res, next) {
   const h = req.headers["authorization"];
   if (!h) return res.status(401).json({ ok: false, error: "No token" });
@@ -86,7 +92,7 @@ function auth(req, res, next) {
   }
 }
 
-// 👤 Register
+/* 👤 Register */
 app.post("/api/register", (req, res) => {
   const { username, password, shop_name, shop_address } = req.body;
   if (!username || !password)
@@ -94,7 +100,7 @@ app.post("/api/register", (req, res) => {
   const hash = bcrypt.hashSync(password, 8);
   try {
     db.run(
-      "INSERT INTO users (username,password,shop_name,shop_address) VALUES (?,?,?,?)",
+      "INSERT INTO users (username, password, shop_name, shop_address) VALUES (?,?,?,?)",
       [username, hash, shop_name || "", shop_address || ""]
     );
     saveDb();
@@ -104,7 +110,7 @@ app.post("/api/register", (req, res) => {
   }
 });
 
-// 🔑 Login
+/* 🔑 Login */
 app.post("/api/login", (req, res) => {
   const { username, password } = req.body;
   const r = db.exec("SELECT * FROM users WHERE username=?", [username]);
@@ -112,7 +118,10 @@ app.post("/api/login", (req, res) => {
   const u = r[0].values[0];
   if (!bcrypt.compareSync(password, u[2]))
     return res.json({ ok: false, error: "Wrong password" });
-  const token = jwt.sign({ id: u[0], username: u[1], role: u[3] }, SECRET);
+  const token = jwt.sign(
+    { id: u[0], username: u[1], role: u[3] },
+    SECRET
+  );
   res.json({
     ok: true,
     token,
@@ -127,7 +136,7 @@ app.post("/api/login", (req, res) => {
   });
 });
 
-// 👁️ Get user
+/* 🧾 Me */
 app.get("/api/me", auth, (req, res) => {
   const r = db.exec("SELECT * FROM users WHERE id=?", [req.user.id]);
   if (!r[0]) return res.json({ ok: false });
@@ -145,10 +154,10 @@ app.get("/api/me", auth, (req, res) => {
   });
 });
 
-// 🏪 Profile update
+/* 🏪 Update Profile */
 app.post("/api/profile", auth, (req, res) => {
   const { shop_name, shop_address } = req.body;
-  db.run("UPDATE users SET shop_name=?,shop_address=? WHERE id=?", [
+  db.run("UPDATE users SET shop_name=?, shop_address=? WHERE id=?", [
     shop_name,
     shop_address,
     req.user.id,
@@ -157,20 +166,21 @@ app.post("/api/profile", auth, (req, res) => {
   res.json({ ok: true });
 });
 
-// 🖼️ Upload logo
-const multerStorage = multer.diskStorage({
+/* 🖼️ Upload Logo */
+const storage = multer.diskStorage({
   destination: "uploads/",
   filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
 });
-const upload = multer({ storage: multerStorage });
+const upload = multer({ storage });
+
 app.post("/api/profile/logo", auth, upload.single("logo"), (req, res) => {
-  const url = "/uploads/" + req.file.filename;
-  db.run("UPDATE users SET logo_path=? WHERE id=?", [url, req.user.id]);
+  const pathUrl = "/uploads/" + req.file.filename;
+  db.run("UPDATE users SET logo_path=? WHERE id=?", [pathUrl, req.user.id]);
   saveDb();
-  res.json({ ok: true, logo_path: url });
+  res.json({ ok: true, logo_path: pathUrl });
 });
 
-// 📦 Products
+/* 📦 Products */
 app.get("/api/products", auth, (req, res) => {
   const r = db.exec("SELECT * FROM products WHERE user_id=?", [req.user.id]);
   const arr = r[0]
@@ -218,37 +228,28 @@ app.delete("/api/products/:id", auth, (req, res) => {
   res.json({ ok: true });
 });
 
-// 🧾 Invoices — Auto reduce stock & prevent negative qty
+/* 🧾 Invoices – auto reduce stock */
 app.post("/api/invoices", auth, (req, res) => {
   const { invoice_id, items, total } = req.body;
   const now = Math.floor(Date.now() / 1000);
-  db.run("INSERT INTO invoices (user_id,invoice_id,items,total,created_at) VALUES (?,?,?,?,?)", [
-    req.user.id,
-    invoice_id,
-    JSON.stringify(items),
-    total,
-    now,
-  ]);
+  db.run(
+    "INSERT INTO invoices (user_id,invoice_id,items,total,created_at) VALUES (?,?,?,?,?)",
+    [req.user.id, invoice_id, JSON.stringify(items), total, now]
+  );
+
+  // 🔻 reduce stock quantity
   items.forEach((it) => {
-    const r = db.exec("SELECT qty FROM products WHERE id=? AND user_id=?", [
+    db.run("UPDATE products SET qty = qty - ? WHERE id=? AND user_id=?", [
+      it.qty,
       it.id,
       req.user.id,
     ]);
-    if (r[0]) {
-      let currentQty = r[0].values[0][0];
-      let newQty = Math.max(0, currentQty - it.qty); // 🔹 no negative qty
-      db.run("UPDATE products SET qty=? WHERE id=? AND user_id=?", [
-        newQty,
-        it.id,
-        req.user.id,
-      ]);
-    }
   });
+
   saveDb();
   res.json({ ok: true });
 });
 
-// 🧾 Get invoices
 app.get("/api/invoices", auth, (req, res) => {
   const r = db.exec("SELECT * FROM invoices WHERE user_id=?", [req.user.id]);
   const arr = r[0]
@@ -262,10 +263,14 @@ app.get("/api/invoices", auth, (req, res) => {
   res.json({ ok: true, invoices: arr });
 });
 
-// 🔰 Default
+/* ✅ Root test */
 app.get("/", (req, res) => {
-  res.json({ ok: true, msg: "Mhyasi Store API" });
+  res.json({ ok: true, msg: "Mhyasi Store API Active ✅" });
 });
 
+/* 🚀 Start Server */
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`✅ Mhyasi Store running on port ${PORT}`));
+app.listen(PORT, () =>
+  console.log(`✅ Mhyasi Store running on port ${PORT}`)
+);
+
