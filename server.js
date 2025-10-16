@@ -5,6 +5,7 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const fs = require("fs");
 const initSqlJs = require("sql.js");
+const path = require("path");
 const bodyParser = require("body-parser");
 
 const app = express();
@@ -14,9 +15,7 @@ app.use(bodyParser.json());
 app.use("/uploads", express.static("uploads"));
 
 let db;
-const SECRET = "mhyasi-secret";
 
-/* 🗄️ Initialize database */
 (async () => {
   const SQL = await initSqlJs();
   if (fs.existsSync("mhyasi.db")) {
@@ -63,13 +62,6 @@ const SECRET = "mhyasi-secret";
         until INTEGER
       );
     `);
-
-    // 🔑 default admin account
-    const hash = bcrypt.hashSync("admin123", 8);
-    db.run(
-      "INSERT INTO users (username, password, role, shop_name, shop_address) VALUES (?,?,?,?,?)",
-      ["admin", hash, "admin", "Admin Store", "Head Office"]
-    );
     saveDb();
   }
 })();
@@ -79,7 +71,9 @@ function saveDb() {
   fs.writeFileSync("mhyasi.db", Buffer.from(data));
 }
 
-/* 🔐 Auth middleware */
+const SECRET = "mhyasi-secret";
+
+// helpers
 function auth(req, res, next) {
   const h = req.headers["authorization"];
   if (!h) return res.status(401).json({ ok: false, error: "No token" });
@@ -92,11 +86,10 @@ function auth(req, res, next) {
   }
 }
 
-/* 👤 Register */
+// register
 app.post("/api/register", (req, res) => {
   const { username, password, shop_name, shop_address } = req.body;
-  if (!username || !password)
-    return res.json({ ok: false, error: "missing fields" });
+  if (!username || !password) return res.json({ ok: false, error: "missing fields" });
   const hash = bcrypt.hashSync(password, 8);
   try {
     db.run(
@@ -110,18 +103,14 @@ app.post("/api/register", (req, res) => {
   }
 });
 
-/* 🔑 Login */
+// login
 app.post("/api/login", (req, res) => {
   const { username, password } = req.body;
   const r = db.exec("SELECT * FROM users WHERE username=?", [username]);
   if (!r[0]) return res.json({ ok: false, error: "User not found" });
   const u = r[0].values[0];
-  if (!bcrypt.compareSync(password, u[2]))
-    return res.json({ ok: false, error: "Wrong password" });
-  const token = jwt.sign(
-    { id: u[0], username: u[1], role: u[3] },
-    SECRET
-  );
+  if (!bcrypt.compareSync(password, u[2])) return res.json({ ok: false, error: "Wrong pass" });
+  const token = jwt.sign({ id: u[0], username: u[1], role: u[3] }, SECRET);
   res.json({
     ok: true,
     token,
@@ -136,7 +125,7 @@ app.post("/api/login", (req, res) => {
   });
 });
 
-/* 🧾 Me */
+// me
 app.get("/api/me", auth, (req, res) => {
   const r = db.exec("SELECT * FROM users WHERE id=?", [req.user.id]);
   if (!r[0]) return res.json({ ok: false });
@@ -154,7 +143,7 @@ app.get("/api/me", auth, (req, res) => {
   });
 });
 
-/* 🏪 Update Profile */
+// profile update
 app.post("/api/profile", auth, (req, res) => {
   const { shop_name, shop_address } = req.body;
   db.run("UPDATE users SET shop_name=?, shop_address=? WHERE id=?", [
@@ -166,7 +155,7 @@ app.post("/api/profile", auth, (req, res) => {
   res.json({ ok: true });
 });
 
-/* 🖼️ Upload Logo */
+// upload logo
 const storage = multer.diskStorage({
   destination: "uploads/",
   filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
@@ -180,16 +169,11 @@ app.post("/api/profile/logo", auth, upload.single("logo"), (req, res) => {
   res.json({ ok: true, logo_path: pathUrl });
 });
 
-/* 📦 Products */
+// products
 app.get("/api/products", auth, (req, res) => {
   const r = db.exec("SELECT * FROM products WHERE user_id=?", [req.user.id]);
   const arr = r[0]
-    ? r[0].values.map((v) => ({
-        id: v[0],
-        name: v[2],
-        price: v[3],
-        qty: v[4],
-      }))
+    ? r[0].values.map((v) => ({ id: v[0], name: v[2], price: v[3], qty: v[4] }))
     : [];
   res.json({ ok: true, products: arr });
 });
@@ -220,24 +204,22 @@ app.put("/api/products/:id", auth, (req, res) => {
 });
 
 app.delete("/api/products/:id", auth, (req, res) => {
-  db.run("DELETE FROM products WHERE id=? AND user_id=?", [
-    req.params.id,
-    req.user.id,
-  ]);
+  db.run("DELETE FROM products WHERE id=? AND user_id=?", [req.params.id, req.user.id]);
   saveDb();
   res.json({ ok: true });
 });
 
-/* 🧾 Invoices – auto reduce stock */
+// invoices (auto reduce stock)
 app.post("/api/invoices", auth, (req, res) => {
   const { invoice_id, items, total } = req.body;
   const now = Math.floor(Date.now() / 1000);
-  db.run(
-    "INSERT INTO invoices (user_id,invoice_id,items,total,created_at) VALUES (?,?,?,?,?)",
-    [req.user.id, invoice_id, JSON.stringify(items), total, now]
-  );
-
-  // 🔻 reduce stock quantity
+  db.run("INSERT INTO invoices (user_id,invoice_id,items,total,created_at) VALUES (?,?,?,?,?)", [
+    req.user.id,
+    invoice_id,
+    JSON.stringify(items),
+    total,
+    now,
+  ]);
   items.forEach((it) => {
     db.run("UPDATE products SET qty = qty - ? WHERE id=? AND user_id=?", [
       it.qty,
@@ -245,7 +227,6 @@ app.post("/api/invoices", auth, (req, res) => {
       req.user.id,
     ]);
   });
-
   saveDb();
   res.json({ ok: true });
 });
@@ -263,14 +244,9 @@ app.get("/api/invoices", auth, (req, res) => {
   res.json({ ok: true, invoices: arr });
 });
 
-/* ✅ Root test */
 app.get("/", (req, res) => {
-  res.json({ ok: true, msg: "Mhyasi Store API Active ✅" });
+  res.json({ ok: true, msg: "Mhyasi Store API" });
 });
 
-/* 🚀 Start Server */
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () =>
-  console.log(`✅ Mhyasi Store running on port ${PORT}`)
-);
-
+app.listen(PORT, () => console.log(`✅ Mhyasi Store running on port ${PORT}`));
